@@ -1,0 +1,4 @@
+YOLO video with 2thread
+------------------------
+2 threads processes video images and combines a single output video
+This makes processing speed look faster by a factor of 2

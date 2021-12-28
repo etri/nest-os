@@ -1,0 +1,20 @@
+#############################################
+#  Delete all object files in app directory #
+#############################################
+
+dir = $(filter-out Makefile.rm, $(shell ls))
+
+TRGLST = $(shell find $(dir) -name *.lst)
+TRGOBJ = $(shell find $(dir) -name *.o)
+TRGELF = $(shell find $(dir) -name *.elf)
+#TRGMAKEFILE = $(shell find $(appsdir) -name Makefile)
+
+rm :
+	rm $(TRGOBJ)
+
+echo :
+	@echo $(TRGOBJ) 
+
+echo_dir :
+	@echo $(dir)
+

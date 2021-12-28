@@ -1,0 +1,4 @@
+CC=gcc
+CPP=g++
+DEBUG=1
+NPU=0

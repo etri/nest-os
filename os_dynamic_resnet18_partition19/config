@@ -1,0 +1,3 @@
+CC=gcc
+CPP=g++
+DEBUG=1

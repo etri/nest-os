@@ -1,0 +1,10 @@
+ Application YOLO (Single Image Inference)
+--------------------------------------------
+TARGETs : edit Makefile to compile each target (use un# and #)
+- yolo : data input via workspace memory
+- yolo_b : file input
+- yolo_c : file input & loader included with file kernel
+- yolo_d : file input & task loader included with file kernel 
+- yolo_e(experimental) : file input & some data is transferred via workspace memory to nn_object
+yolo, yolo_b, yolo_e needs "nnload" before execution
+
