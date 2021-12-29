@@ -3,11 +3,15 @@
 ************************
 ** Set up environment **
 ************************
+
  set up your shell environment (e.g. in your ~/.bashrc)
+ 
       $ vi ~/.bashrc
 
  add the following two lines in the .bashrc file
+ 
       NEST_HOME=~/nestos-1.x (x is the version number, e.g. 1.0, 1.1, 1.2 ...)
+      
       export NEST_HOME
 
       $ source ~/.bashrc
@@ -16,28 +20,40 @@
 ** How to compile? **
 *********************
 (gcc packages need to be installed in your system)
+
     for NEST compile
+    
       $ make clean
+      
       $ make
 	
     for NOS compile
+    
       $ cd ./os_yolo_stcnpu
+      
       $ make clean
+      
       $ make
 
 ********************
 ** how to execute **
 ********************
   - first, execute the daemon (server)
+  - 
       $ ./daemon
 
   - move to a specific NOS directory and the run the NOS. For example,
+  - 
       $ cd os_yolo_stcnpu/yolov2
+      
       $ ./nos (NNID is assigned by daemon)
 
   - move to the application directory. Then, compile & load the kernel. For example,
+  - 
       $ cd app/yolo
+      
       $ make clean; make
+      
       $ ./nnload (or ./nnload <load_file> or ./nnload -undo (for unload))
 
   - and then, in the application directory, exeute the application. For example,
