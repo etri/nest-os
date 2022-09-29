@@ -34,8 +34,10 @@ typedef struct sock_inf
 	struct sockaddr_in os_addr;
 	socklen_t os_addr_len;
 
-	void (*send_msg)(int sockfd, void *msg, size_t msg_len, const struct sockaddr *dest_addr);
-	void (*recv_msg)(int sockfd, SockMessage *msg, struct sockaddr *src_addr, socklen_t *src_len);
+	//void (*send_msg)(int sockfd, void *msg, size_t msg_len, const struct sockaddr *dest_addr);
+	//void (*recv_msg)(int sockfd, SockMessage *msg, struct sockaddr *src_addr, socklen_t *src_len);
+	void (*send_msg)(int sockfd, void *data, size_t data_len);
+	void (*recv_msg)(int sockfd, void *data, size_t data_len);
 
 	void (*send_data)(int sockfd, void *data, size_t data_len);
 	void (*recv_data)(int sockfd, void *data, size_t data_len);
@@ -45,7 +47,7 @@ typedef struct sock_inf
 	void (*send_filename)(int sockfd, char *file_name);
 	void (*recv_filename)(int sockfd, char *filename);
 	int (*server_init)(int *server_fd, int port);
-	int (*server_accept)(int *server_fd);
+	int (*server_accept)(int *server_fd, char client_addr[]);
 	int (*client_connect)(char *dest_addr, int port);
 } SockInf;
 

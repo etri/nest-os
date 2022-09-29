@@ -29,6 +29,7 @@
 #include "share_comm.h"
 #include "ntask.h"
 #include "bit_handler.h"
+#include "util_time.h"
 
 /* Ntask APIs */
 void *ntask_get_memory_pointer(Ntask *nt)
@@ -62,6 +63,9 @@ static void sock_portnum_init(Ntask *nt)
 
 static void ntask_run(Ntask *nt)
 {
+	pthread_mutex_lock(&nt->lock);
+	struct timeval t1 = what_time(); // measure time
+
 	/////////////////////////////////////// run input_handler first
 	if (nt->input_handler)
 	{
@@ -85,24 +89,20 @@ static void ntask_run(Ntask *nt)
 	else
 	{
 		nt->msg_predict.osid = msg->osid;
+		nt->msg_predict.nos_mask = msg->mask;
 	}
 
 	// Step 2 : Data Communication Phase
 	nt->msg_predict.mtype = CL_PREDICT_S2;
 
 ////////////////////////////////////// SEND FILE OR/AND DATA ///////////////////////////////////
-	// Open Socket Port
-	sock_portnum_init(nt);
-
-	// socket interfacing with NPU OS to send image data
-	int server_fd = -1;
-
-	nt->sock_inf->server_init(&server_fd, nt->msg_predict.port);
 
         nt->msgq_inf->send_msg(nt->msgq_inf->msgq_server, &nt->msg_predict);
 
 	// blocking I/O to accept a ntask connection
-	int ntask_fd = nt->sock_inf->server_accept(&server_fd);
+	int ntask_fd = 0;
+	char client_addr[SOCKADDR_LEN];
+	ntask_fd = nt->sock_inf->server_accept(&nt->server_fd, client_addr);
 
 if (nt->indata_push) 
 {
@@ -112,12 +112,25 @@ if (nt->indata_push)
 	{
 		nt->sock_inf->send_filename(ntask_fd, nt->infile_name);
 		nt->sock_inf->send_file(ntask_fd, nt->fd, nt->infile_size);
+		close(nt->fd); // no more needed
 	}
 
 	// Send input data to NOS
 	if (nt->input_type & INPUT_DATA_BIT)
 	{
-		nt->sock_inf->send_data(ntask_fd, nt->memory_pointer+nt->indata_start_offset, nt->indata_size);
+		if (!nt->num_pred) // no predecessor
+		{
+			nt->sock_inf->send_data(ntask_fd, nt->memory_pointer+nt->indata_start_offset, nt->indata_size);
+		}
+		else // one or more predecessors exist
+		{
+			for (int i=0; i<nt->num_pred; i++) // for each predecessor
+			{
+				Ntask *prev_nt = nt->pred[i];
+
+				nt->sock_inf->send_data(ntask_fd, nt->memory_pointer+prev_nt->outdata_start_offset, prev_nt->outdata_size);
+			}
+		}
 	}
 }
 
@@ -145,7 +158,8 @@ if (nt->outdata_pull)
 	else
 	{
         	close(ntask_fd);
-               	close(server_fd);
+		//printf("close task_fd (%d)\n", ntask_fd);
+		
 		//printf("Prediction is successful.\n");
 	}
 
@@ -159,16 +173,31 @@ if (nt->outdata_pull)
 		nt->output_handler(nt);
 	}
 	///////////////////////////////////////
+
+	struct timeval t2 = what_time(); // measure time
+	nt->time = what_time_diff(t1, t2); // calculate t2-t1
+
+	pthread_mutex_unlock(&nt->lock);
+}
+
+static double ntask_get_time(Ntask *nt)
+{
+	return(timeval_to_double(nt->time));
 }
 
 static void ntask_set_data_input(Ntask *nt, int indata_start_offset, int indata_size)
 {
 	nt->indata_start_offset = indata_start_offset;
 	nt->indata_size = indata_size;
-	nt->msg_predict.indata_start_offset = indata_start_offset;
 	nt->msg_predict.indata_size = indata_size;
 	nt->msg_predict.input_type |= INPUT_DATA_BIT;
 	nt->input_type |= INPUT_DATA_BIT;
+}
+
+static void ntask_set_data_input_offset_remote(Ntask *nt, int indata_start_offset_remote)
+{
+	nt->indata_start_offset_remote = indata_start_offset_remote;
+	nt->msg_predict.indata_start_offset_remote = indata_start_offset_remote;
 }
 
 static void ntask_unset_data_input(Ntask *nt)
@@ -244,6 +273,15 @@ static unsigned int ntask_get_nos_mask(Ntask *nt)
 	return mask;
 }
 
+static unsigned int ntask_get_nos_mask_output(Ntask *nt)
+{
+	unsigned int mask;
+
+	mask = nt->msg_predict.nos_mask;
+
+	return mask;
+}
+
 static void ntask_set_affinity(Ntask *nt, unsigned int mask)
 {
 	nt->affinity_mask = mask;
@@ -294,6 +332,10 @@ static void ntask_exit(Ntask *nt)
 
 	// destory message queue
 	msgctl(nt->msg_predict.mqid, IPC_RMID, 0);
+
+	// shutdown socket
+        close(nt->server_fd);
+	//printf("close server_fd.\n");
 
 	// free ntask memory
 	free(nt);
@@ -370,9 +412,11 @@ Ntask *ntask_create(char *name, int nnid, void (*input_handler)(Ntask *nt), void
 	ntask->priority = 10; // default_priority
 	ntask->input_type = 0;
 	ntask->fd = 0;
+	ntask->server_fd = 0;
 	ntask->infile_size = 0;
 	ntask->memory_pointer = NULL;
 	ntask->indata_start_offset = 0;
+	ntask->indata_start_offset_remote = 0;
 	ntask->indata_size = 0;
 	ntask->outdata_start_offset = 0;
 	ntask->outdata_size = 0;
@@ -383,14 +427,19 @@ Ntask *ntask_create(char *name, int nnid, void (*input_handler)(Ntask *nt), void
 	ntask->port = 0;
 	ntask->part_num_start = 0;
 	ntask->part_num_delta = 0;
+	ntask->time.tv_sec = 0;
+	ntask->time.tv_usec = 0;
 
 	ntask->np = NULL;
-	ntask->next = NULL;
+	ntask->tid = 0;
 
 	ntask->num_pred = 0;
  	ntask->num_succ = 0;
         ntask->num_vpred = 0;
         ntask->num_vsucc = 0;
+
+        pthread_mutex_init(&ntask->num_vpred_lock, NULL);
+        pthread_mutex_init(&ntask->num_vsucc_lock, NULL);
 
         for (int i=0; i<MAX_PRED_NUM; i++)
         {
@@ -402,17 +451,21 @@ Ntask *ntask_create(char *name, int nnid, void (*input_handler)(Ntask *nt), void
                 ntask->succ[i] = NULL;
         }
 
+	ntask->next = NULL;
+
 	ntask->loader = loader_create();
 
 	ntask->input_handler = input_handler;
 	ntask->output_handler = output_handler;
 	ntask->get_memory_pointer = ntask_get_memory_pointer;
 	ntask->get_nos_mask = ntask_get_nos_mask;
+	ntask->get_nos_mask_output = ntask_get_nos_mask_output;
 	ntask->set_affinity = ntask_set_affinity;
 	ntask->set_priority = ntask_set_priority;
 	ntask->set_memory = ntask_set_memory;
 	ntask->free_memory = ntask_free_memory;
 	ntask->set_data_input = ntask_set_data_input;
+	ntask->set_data_input_offset_remote = ntask_set_data_input_offset_remote;
 	ntask->unset_data_input = ntask_unset_data_input;
 	ntask->get_data_output = ntask_get_data_output;
 	ntask->set_file_input = ntask_set_file_input;
@@ -426,6 +479,7 @@ Ntask *ntask_create(char *name, int nnid, void (*input_handler)(Ntask *nt), void
 	ntask->disable_data_push = ntask_disable_data_push;
 	ntask->disable_data_pull = ntask_disable_data_pull;
 	ntask->next_nt = ntask_next_nt;
+	ntask->get_time = ntask_get_time;
 
 	// ntask & daemon server message queue channels are created
 	ntask->msgq_inf = msgq_inf_create();
@@ -438,7 +492,7 @@ Ntask *ntask_create(char *name, int nnid, void (*input_handler)(Ntask *nt), void
 	msg_predict->nnid = ntask->nnid;
 	msg_predict->input_type = ntask->input_type;
 	msg_predict->infile_size = ntask->infile_size;
-	msg_predict->indata_start_offset = ntask->indata_start_offset;
+	msg_predict->indata_start_offset_remote = ntask->indata_start_offset_remote;
 	msg_predict->indata_size = ntask->indata_size;
 	msg_predict->indata_push = ntask->indata_push;
 	msg_predict->outdata_pull = ntask->outdata_pull;
@@ -459,6 +513,10 @@ Ntask *ntask_create(char *name, int nnid, void (*input_handler)(Ntask *nt), void
 	}
 	ntask->memory_size = NTASK_WSMEM_SIZE; // 64MBytes
 	
+	// port initialization : ntask->server_fd for TCP data communication
+	sock_portnum_init(ntask);
+	ntask->sock_inf->server_init(&ntask->server_fd, ntask->msg_predict.port);
+
 	return ntask;
 }
 
@@ -502,7 +560,7 @@ Ntask *ntask_partition_range_create(char *name, int nnid, int part_num_start, in
 }
 
 /* Ntask API for deamon */
-void daemon_kill(void)
+void daemon_kill(unsigned int nos_mask)
 {
 	MsgQInf *msgq_inf = msgq_inf_create();
 
@@ -512,6 +570,8 @@ void daemon_kill(void)
 	MsgClientDmkill msg_dmkill;
 
 	msg_dmkill.mtype = CL_DMKILL; // must be > 0
+	msg_dmkill.nos_mask = nos_mask;  // nos mask to be killed
+	
         msgq_inf->send_msg(msgq_inf->msgq_server, &msg_dmkill);
 
 	msgq_inf_destroy(msgq_inf);

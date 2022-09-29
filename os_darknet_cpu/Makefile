@@ -31,7 +31,8 @@ LDFLAGS+=-lrt
 #LDFLAGS+=-mavx
 #endif
 
-OBJ_FILES= src/task.o src/os_sched.o src/queue.o src/npuos.o src/sock_handler.o src/share_comm.o src/bit_handler.o src/nn_object.o src/os_shm.o src/os_mem.o npu/npu.o
+OBJ_FILES= src/task.o src/os_sched.o src/queue.o src/npuos.o src/sock_handler.o src/share_comm.o src/bit_handler.o src/nn_object.o src/os_shm.o npu/npu.o
+#OBJ_FILES+=src/util_time.o # not needed in darknet since it is already included
 
 #NNOBJ_FILES= yolov2/lib/libyolov2.a darknet/libdarknet.a
 NNOBJ_FILES=darknet/libdarknet_cpu.a

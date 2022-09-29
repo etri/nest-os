@@ -22,6 +22,7 @@
 #include <pthread.h>
 #include <stdarg.h>
 #include "nprocess.h"
+#include "util_time.h"
 
 #define NPROCESS_DEBUG	0
 
@@ -34,61 +35,85 @@ static void *fork_nt(void *args)
         printf("run_nt %s\n", nt->name);
 #endif
 
-	if (nt->num_pred==1)
+	if (nt->num_pred)
 	{
-		Ntask *prev_nt = nt->pred[0];	
+		nt->indata_start_offset = 0;
+		nt->indata_size = 0;
+		nt->input_type |= INPUT_DATA_BIT;
 
-		if (!prev_nt->output_handler && !nt->input_handler)	
-		{
-			nt->indata_start_offset = prev_nt->outdata_start_offset;
-			nt->indata_size = prev_nt->outdata_size;
-			nt->input_type |= INPUT_DATA_BIT;
+		for (int i=0; i<nt->num_pred; i++) // for each predecessor
+                {
+                	Ntask *prev_nt = nt->pred[i];
 
-			nt->msg_predict.indata_start_offset = prev_nt->outdata_start_offset;
-			nt->msg_predict.indata_size = prev_nt->outdata_size;
-			nt->msg_predict.input_type |= INPUT_DATA_BIT; 
-		}
+                        nt->indata_size += prev_nt->outdata_size;
+                }
+
+                nt->msg_predict.indata_start_offset_remote = 0; // automatically 0, if needed, change it in the future (TO DO)
+                nt->msg_predict.indata_size = nt->indata_size;
+                nt->msg_predict.input_type |= INPUT_DATA_BIT;
 	}
 
         // execute Ntask for inference 
         nt->run(nt);
 
+#if (NPROCESS_DEBUG==1)
+        printf("run_nt %s finished\n", nt->name);
+#endif
         for (int i=0; i<nt->num_succ; i++)
         {
                 Ntask *succ_nt = nt->succ[i];
 
+		pthread_mutex_lock(&succ_nt->num_vpred_lock);
                 succ_nt->num_vpred--;
 
                 if (!succ_nt->num_vpred) // run succ_np
                 {
+			pthread_mutex_lock(&nt->num_vsucc_lock);
                         if (nt->num_vsucc > 1)
                         {
                                 pthread_t tid;
                                 if (pthread_create(&tid, 0, fork_nt, succ_nt))
                                 {
-                                        fprintf(stderr, "Thread creation failed\n");
+					pthread_mutex_unlock(&nt->num_vsucc_lock);
+
                                         succ_nt->num_vpred++;
+					pthread_mutex_unlock(&succ_nt->num_vpred_lock);
+
+                                        fprintf(stderr, "Thread creation failed\n");
                                 }
                                 else
                                 {       // fork successfully
+					pthread_mutex_unlock(&succ_nt->num_vpred_lock);
+
+                                        nt->num_vsucc--;
+
+					pthread_mutex_unlock(&nt->num_vsucc_lock);
 #if (NPROCESS_DEBUG==1)
                                         printf("%s fork %s\n", nt->name, succ_nt->name);
 #endif
-                                        nt->num_vsucc--;
                                 }
                         }
                         else if (nt->num_vsucc == 1)
                         {
                                 nt->num_vsucc--;
+				pthread_mutex_unlock(&nt->num_vsucc_lock);
+				pthread_mutex_unlock(&succ_nt->num_vpred_lock);
+
                                 fork_nt(succ_nt);
                         }
 #if (NPROCESS_DEBUG==1)
                         else
                         {
+				pthread_mutex_unlock(&nt->num_vsucc_lock);
+				pthread_mutex_unlock(&succ_nt->num_vpred_lock);
                                 printf("nt->num_vsucc == 0 : error case\n");
                         }
 #endif
                 }
+		else
+		{
+			pthread_mutex_unlock(&succ_nt->num_vpred_lock);
+		}
         }
 
         return NULL;
@@ -96,11 +121,14 @@ static void *fork_nt(void *args)
 
 static void nprocess_run(Nprocess *np)
 {
+	struct timeval t1 = what_time(); // measure time
+
 	// set up for # of pred and succ
         for (Ntask *nt=np->head; nt!=NULL; nt=nt->next)
         {
                 nt->num_vpred = nt->num_pred;
                 nt->num_vsucc = nt->num_succ;
+		nt->tid = 0; // make sure that all tid's are initially zero
 
 #if (NPROCESS_DEBUG==1)
                 printf("nt name : %s num_vpred = %d num_vsucc = %d \n", nt->name, nt->num_vpred, nt->num_vsucc);
@@ -119,32 +147,42 @@ static void nprocess_run(Nprocess *np)
                 Ntask *succ_nt = np->succ[i];
                 //printf("np name : %s\n", succ_np->name);
 
-                if (np->num_vsucc > 1)
+		pthread_mutex_lock(&np->num_vsucc_lock);
+                if (np->num_vsucc > 1) // multiple successor -> use pthread_fork(fork_nt())
                 {
                         pthread_t tid;
 
-                        if (pthread_create(&tid, 0, fork_nt, succ_nt))
+                        int ret = pthread_create(&tid, 0, fork_nt, succ_nt);
+
+			if (ret) // ret contains error number
                         {
                                 fprintf(stderr, "Thread creation failed\n");
-                                succ_nt->num_vpred++;
+				pthread_mutex_unlock(&np->num_vsucc_lock);
                         }
-                        else
+                        else // fork successfully
                         {
-                                // fork successfully
+                                np->num_vsucc--;
+				pthread_mutex_unlock(&np->num_vsucc_lock);
+
+				pthread_mutex_lock(&succ_nt->num_vpred_lock);
+                		succ_nt->num_vpred--;
+				pthread_mutex_unlock(&succ_nt->num_vpred_lock);
 #if (NPROCESS_DEBUG==1)
                                 printf("%s fork %s\n", np->name, succ_nt->name);
 #endif
-                                np->num_vsucc--;
                         }
                 }
-                else if (np->num_vsucc == 1)
+                else if (np->num_vsucc == 1) // single successor -> use function call(fork_nt())
                 {
                         np->num_vsucc--;
+			pthread_mutex_unlock(&np->num_vsucc_lock);
+
                         fork_nt(succ_nt);
                 }
 #if (NPROCESS_DEBUG==1)
                 else
                 {
+			pthread_mutex_unlock(&np->num_vsucc_lock);
                         printf("np->num_vsucc == 0 : error case\n");
                 }
 #endif
@@ -158,6 +196,14 @@ static void nprocess_run(Nprocess *np)
 
                 pthread_join(pred_nt->tid, NULL);
         }
+
+	struct timeval t2 = what_time(); // measure time
+	np->time = what_time_diff(t1, t2); // calculate t2-t1
+}
+
+static double nprocess_get_time(Nprocess *np)
+{
+        return(timeval_to_double(np->time));
 }
 
 static void nprocess_exit(Nprocess *np)
@@ -192,39 +238,6 @@ static void nprocess_set_priority(Nprocess *np, int priority)
 		nt->set_priority(nt, priority);
 	}
 }
-
-#if 0
-static void nprocess_add_ntask(Nprocess *np, Ntask *nt)
-{
-	if (!np->head)
-	{
-		np->head = np->tail = nt;
-	}
-	else
-	{
-		np->tail->next = nt;
-		np->tail = nt;
-		np->tail->next = NULL;
-	}
-	nt->np = np;
-
-	if (nt->memory_pointer)
-	{
-		nt->free_memory(nt);
-	}
-	else // task memory uses process memory in common
-	{
-		nt->memory_pointer = np->memory_pointer;
-		nt->memory_size = np->memory_size;
-	}
-}
-
-static void nprocess_next_np(Nprocess *np, Nprocess *np_next)
-{
-	np->succ[np->num_succ++] = np_next;
-	np_next->pred[np_next->num_pred++] = np;
-}
-#endif
 
 static void nprocess_contain(Nprocess *np, int args, ...)
 {
@@ -299,6 +312,9 @@ Nprocess *nprocess_create(char *name)
 	nprocess->num_vpred = 0;
 	nprocess->num_vsucc = 0;
 
+	pthread_mutex_init(&nprocess->num_vpred_lock, NULL);
+        pthread_mutex_init(&nprocess->num_vsucc_lock, NULL);
+
 	for (int i=0; i<MAX_PRED_NUM; i++)
 	{
 		nprocess->pred[i] = NULL;
@@ -319,6 +335,7 @@ Nprocess *nprocess_create(char *name)
 	nprocess->run = nprocess_run;
 	nprocess->exit = nprocess_exit;
 	nprocess->contain = nprocess_contain;
+	nprocess->get_time = nprocess_get_time;
 
 	// workspace memory attached
         nprocess->memory_pointer = malloc(NTASK_WSMEM_SIZE);

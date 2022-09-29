@@ -15,9 +15,46 @@
 * LICENSE file : README_LICENSE_ETRI located in the top directory
 *
 *****************************************************************************/
+#include <stdio.h>
+#include <stdlib.h>
 #include "ntask.h"
 
 int main(int argc, char *argv[])
 {
-	daemon_kill();
+	unsigned int nos_mask;
+
+	if (argc == 1)
+	{
+		nos_mask = ~0;
+	}
+	else if (argc == 2)
+	{
+		nos_mask = (1 << atoi(argv[1]));
+	}
+	else if (argc == 3)
+	{
+		if (!strcmp(argv[1], "-mask"))
+		{
+			nos_mask = atoi(argv[2]);
+		}
+		else
+		{
+			printf("Usage:\n");
+			printf("dmkill : kill all NOSes\n");
+			printf("dmkill <nos_id> : kill a specific NOS with <nos_id>\n");
+			printf("dmkill -mask <nos_mask> : kill a set of NOSes corresponding <nos_mask>\n");
+			exit(1);
+		}
+		
+	}
+	else
+	{
+			printf("Usage:\n");
+			printf("dmkill : kill all NOSes\n");
+			printf("dmkill <nos_id> : kill a specific NOS with <nos_id>\n");
+			printf("dmkill -mask <nos_mask> : kill a set of NOSes corresponding <nos_mask>\n");
+			exit(1);
+	}
+
+	daemon_kill(nos_mask);
 }

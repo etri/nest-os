@@ -39,7 +39,8 @@ typedef struct nn_object_input
 
 typedef struct nn_object_output
 {
-	int data_offset;
+	int data_offset_client; // source offset at wsmem in client
+	int data_offset; // source offset at wsmem in nos
 	int data_size;	
 } Output;
 

@@ -42,7 +42,7 @@ static int is_preload_check(NnObject *nn_object, int part_num_start, int part_nu
 {
 	if (nn_object->loaded)
 	{
-		BitString bs;
+		BitString bs = BIT_STRING_INITIALIZER;
 		convert_to_bitstring(part_num_start, part_num_start+part_num_delta, &bs);
 		if (partblock_is_partbit_set(&nn_object->bs, &bs))
                          return 1;
@@ -109,6 +109,7 @@ static void load_task(void *value)
 				}
 				sock_inf_os->recv_file(server_fd, file_fd, msg_load->filesize);
 				close(file_fd);
+				close(server_fd);
 			}
 
 			NetInfo info;
@@ -118,7 +119,7 @@ static void load_task(void *value)
 			nn_object->load(nn_object, &info);
 			nn_object->loaded = 1;
 	
-			BitString bs;
+			BitString bs = BIT_STRING_INITIALIZER;
 			convert_to_bitstring(info.part_num_start, info.part_num_start+info.part_num_delta, &bs);
 			partblock_set_bit(&nn_object->bs, &bs);
 
@@ -143,7 +144,12 @@ static void load_task(void *value)
 		echo_msg.osid = npuos->id;
 	}
 
-	sock_inf_os->send_msg(sock_inf_os->sockfd, &echo_msg, sizeof(echo_msg), (struct sockaddr *) &sock_inf_os->server_addr);
+	//int msg_type = echo_msg.mtype;
+	//sock_inf_os->send_msg(sock_inf_os->sockfd, &msg_type, sizeof(msg_type));
+	SockMessage sock_msg;
+	memcpy(&sock_msg, &echo_msg, sizeof(echo_msg));
+	sock_inf_os->send_msg(sock_inf_os->sockfd, &sock_msg, sizeof(sock_msg));
+	//sock_inf_os->send_msg(sock_inf_os->sockfd, &echo_msg, sizeof(echo_msg));
 
 	//free(msg_load);
 }
@@ -160,7 +166,11 @@ static void unload_task(void *value)
 	{
 		echo_msg.rtype = ECHO_ERR;
 		echo_msg.mqid = msg_unload->mqid;
-		sock_inf_os->send_msg(sock_inf_os->sockfd, &echo_msg, sizeof(echo_msg), (struct sockaddr *) &sock_inf_os->server_addr);
+		//sock_inf_os->send_msg(sock_inf_os->sockfd, &echo_msg.mtype, sizeof(echo_msg.mtype));
+		SockMessage sock_msg;
+		memcpy(&sock_msg, &echo_msg, sizeof(echo_msg));
+		sock_inf_os->send_msg(sock_inf_os->sockfd, &sock_msg, sizeof(sock_msg));
+		//sock_inf_os->send_msg(sock_inf_os->sockfd, &echo_msg, sizeof(echo_msg));
 		free(msg_unload);
 		return;
 	}
@@ -214,9 +224,12 @@ static void unload_task(void *value)
 		echo_msg.osid = npuos->id;
 	}
 
-	sock_inf_os->send_msg(sock_inf_os->sockfd, &echo_msg, sizeof(echo_msg), (struct sockaddr *) &sock_inf_os->server_addr);
-	
-	//free(msg_unload);
+	//int msg_type = echo_msg.mtype;
+	//sock_inf_os->send_msg(sock_inf_os->sockfd, &msg_type, sizeof(msg_type));
+	SockMessage sock_msg;
+	memcpy(&sock_msg, &echo_msg, sizeof(echo_msg));
+	sock_inf_os->send_msg(sock_inf_os->sockfd, &sock_msg, sizeof(sock_msg));
+	//sock_inf_os->send_msg(sock_inf_os->sockfd, &echo_msg, sizeof(echo_msg));
 }
 
 static void predict_task(void *value)
@@ -232,7 +245,12 @@ static void predict_task(void *value)
 		printf("Error: NN %d is not supported!\n", msg_predict->nnid);
 
 		SockMsgOSEcho msg_echo = {OS_PREDICT_ECHO, msg_predict->mqid, msg_predict->nnid, npuos->id, ECHO_ERR};
-		sock_inf_os->send_msg(sock_inf_os->sockfd, &msg_echo, sizeof(msg_echo), (struct sockaddr *) &sock_inf_os->server_addr);
+		//int msg_type = msg_echo.mtype;
+		//sock_inf_os->send_msg(sock_inf_os->sockfd, &msg_type, sizeof(msg_type));
+		SockMessage sock_msg;
+		memcpy(&sock_msg, &msg_echo, sizeof(msg_echo));
+		sock_inf_os->send_msg(sock_inf_os->sockfd, &sock_msg, sizeof(sock_msg));
+		//sock_inf_os->send_msg(sock_inf_os->sockfd, &msg_echo, sizeof(msg_echo));
 	}
 	else
 	{
@@ -248,8 +266,7 @@ static void predict_task(void *value)
 
 		int server_fd = sock_inf_os->client_connect(server_ip, msg_predict->port); // ip & port
 
-		Input input;
-		input.filename = NULL;
+		Input input = {0, 0, 0, NULL};
 
 if (msg_predict->indata_push)
 {
@@ -282,11 +299,12 @@ if (msg_predict->indata_push)
 		if (msg_predict->input_type & INPUT_DATA_BIT) // means "input is FILE"
 		{
 			//printf("open touch shmptr:%p\n", nn_object->shmptr);
-			sock_inf_os->recv_data(server_fd, nn_object->wsmem + msg_predict->indata_start_offset, msg_predict->indata_size);
+			sock_inf_os->recv_data(server_fd, nn_object->wsmem + msg_predict->indata_start_offset_remote, msg_predict->indata_size);
+			//sock_inf_os->recv_data(server_fd, nn_object->wsmem, msg_predict->indata_size);
 		}
 		else
 		{
-			msg_predict->indata_start_offset = -1; // means FILE
+			msg_predict->indata_start_offset_remote = -1; // means FILE
 		}
 }
 ////////////////////////////// RECV DATA/FILE END ////////////////////////////
@@ -296,7 +314,7 @@ if (msg_predict->indata_push)
 		info.part_num_delta = msg_predict->part_num_delta;
 
 		input.type = msg_predict->input_type;
-		input.data_offset = msg_predict->indata_start_offset;
+		input.data_offset = msg_predict->indata_start_offset_remote;
 		input.data_size = msg_predict->indata_size;
 
 		nn_object->set_input(nn_object, &info, &input);
@@ -305,14 +323,14 @@ if (msg_predict->indata_push)
 		// prediction is made
 		nn_object->predict(nn_object, &info);
 
-		Output output;
+		Output output = {0, 0, 0};
 
 		nn_object->get_output(nn_object, &info, &output);
 
 		double time_duration = what_time_is_it_now() - start_time;
 
 ////////////////////////////// SEND DATA ///////////////////////
-		SockMsgOSOutdataEcho echo_msg = {OS_OUTDATA_ECHO, msg_predict->nnid, npuos->id, output.data_offset, output.data_size};
+		SockMsgOSOutdataEcho echo_msg = {OS_OUTDATA_ECHO, msg_predict->nnid, npuos->id, output.data_offset_client, output.data_size};
 	
 		send(server_fd, &echo_msg, sizeof(echo_msg), MSG_CONFIRM);
 if (msg_predict->outdata_pull)
@@ -321,12 +339,17 @@ if (msg_predict->outdata_pull)
 		sock_inf_os->send_data(server_fd, nn_object->wsmem + output.data_offset, output.data_size);
 }
 ////////////////////////////// SEND DATA END ///////////////////
+		close(server_fd);
 
 		// notify server the task is finished
 		SockMsgOSPredictEcho msg_echo = {OS_PREDICT_ECHO, msg_predict->mqid, msg_predict->nnid, msg_predict->part_num_start, msg_predict->part_num_delta, npuos->id, msg_predict->prev_wcet, time_duration, ECHO_OK};
-		sock_inf_os->send_msg(sock_inf_os->sockfd, &msg_echo, sizeof(msg_echo), (struct sockaddr *) &sock_inf_os->server_addr);
-
-		close(server_fd);
+		//sock_inf_os->send_msg(sock_inf_os->sockfd, &msg_echo, sizeof(msg_echo), (struct sockaddr *) &sock_inf_os->server_addr);
+		//int msg_type = msg_echo.mtype;
+		//sock_inf_os->send_msg(sock_inf_os->sockfd, &msg_type, sizeof(msg_type));
+		SockMessage sock_msg;
+		memcpy(&sock_msg, &msg_echo, sizeof(msg_echo));
+		sock_inf_os->send_msg(sock_inf_os->sockfd, &sock_msg, sizeof(sock_msg));
+		//sock_inf_os->send_msg(sock_inf_os->sockfd, &msg_echo, sizeof(msg_echo));
 
 		if (msg_predict->input_type & INPUT_FILE_BIT) // input is file, remove it locally
 		{
@@ -369,7 +392,13 @@ static void nos_info_task(void *value)
 			break;
 	}
 
-	sock_inf_os->send_msg(sock_inf_os->sockfd, &echo_msg, sizeof(echo_msg), (struct sockaddr *) &sock_inf_os->server_addr);
+	//sock_inf_os->send_msg(sock_inf_os->sockfd, &echo_msg, sizeof(echo_msg), (struct sockaddr *) &sock_inf_os->server_addr);
+	//int msg_type = echo_msg.mtype;
+	//sock_inf_os->send_msg(sock_inf_os->sockfd, &msg_type, sizeof(msg_type));
+	SockMessage sock_msg;
+	memcpy(&sock_msg, &echo_msg, sizeof(echo_msg));
+	sock_inf_os->send_msg(sock_inf_os->sockfd, &sock_msg, sizeof(sock_msg));
+	//sock_inf_os->send_msg(sock_inf_os->sockfd, &echo_msg, sizeof(echo_msg));
 
 	//free(msg_nos_info);
 }
@@ -385,24 +414,23 @@ void *sock_npuos_handler(void *args)
 
 	while (!handler_done)
 	{
-		SockMessage msg;
+		//int msg_type;
+		SockMessage sock_msg;
 
-		sock_inf_os->recv_msg(sock_inf_os->sockfd, &msg, (struct sockaddr *) &sock_inf_os->server_addr, &sock_inf_os->server_addr_len);
+		//sock_inf_os->recv_msg(sock_inf_os->sockfd, &msg_type, sizeof(msg_type));
+		sock_inf_os->recv_msg(sock_inf_os->sockfd, &sock_msg, sizeof(sock_msg));
 		
-		switch (msg.mtype)
+		switch (sock_msg.mtype)
 		{
 			case CL_PREDICT :
 			{
-#if (NEST_DBG==1)
-				printf("sock npuos_handler %d : PREDICT\n", npuos->id);
-#endif
-				SockMsgServerPredict *msg_predict = (SockMsgServerPredict *)&msg;
+				SockMsgServerPredict *msg_predict = (SockMsgServerPredict *)&sock_msg;
+				//sock_inf_os->recv_msg(sock_inf_os->sockfd, &msg_predict, sizeof(msg_predict));
+
+				msg_predict->npuos = npuos;
 
 				// message is copied to the msg member in task data structure
-				Task *task = task_message_create(predict_task, &msg, msg_predict->priority);
-
-				msg_predict = (SockMsgServerPredict *)&task->msg;
-				msg_predict->npuos = npuos;
+				Task *task = task_message_create(predict_task, msg_predict, msg_predict->priority);
 
 				task_submit(sched, task);
 
@@ -412,15 +440,11 @@ void *sock_npuos_handler(void *args)
 
 			case CL_LOAD :
 			{
-#if (NEST_DBG==1)
-				printf("sock npuos_handler %d : LOAD\n", npuos->id);
-#endif
-				//SockMsgServerLoad *msg_load = (SockMsgServerLoad *)&msg;
+				SockMsgServerLoad *msg_load = (SockMsgServerLoad *)&sock_msg; 
+				//sock_inf_os->recv_msg(sock_inf_os->sockfd, &msg_load, sizeof(msg_load));
 
-				Task *task = task_message_create(load_task, &msg, 250);
-
-				SockMsgServerLoad *msg_load = (SockMsgServerLoad *)&task->msg;
 				msg_load->npuos = npuos;
+				Task *task = task_message_create(load_task, msg_load, 250);
 
 				task_submit(sched, task);
 
@@ -431,15 +455,12 @@ void *sock_npuos_handler(void *args)
 
 			case CL_UNLOAD :
 			{
-#if (NEST_DBG==1)
-				printf("sock npuos_handler %d : UNLOAD\n", npuos->id);
-#endif
-				//SockMsgServerUnload *msg_unload = (SockMsgServerUnload *)&msg;
+				SockMsgServerUnload *msg_unload = (SockMsgServerUnload *)&sock_msg; 
+				//sock_inf_os->recv_msg(sock_inf_os->sockfd, &msg_unload, sizeof(msg_unload));
 
-				Task *task = task_message_create(unload_task, &msg, 200);
-
-				SockMsgServerUnload *msg_unload = (SockMsgServerUnload *)&task->msg;
 				msg_unload->npuos = npuos;
+
+				Task *task = task_message_create(unload_task, msg_unload, 200);
 
 				task_submit(sched, task);
 
@@ -449,15 +470,11 @@ void *sock_npuos_handler(void *args)
 
 			case CL_NOS_INFO :
 			{
-#if (NEST_DBG==1)
-				printf("sock npuos_handler %d : NOS_INFO\n", npuos->id);
-#endif
-				//SockMsgServerNosInfo *msg_nos_info = (SockMsgServerNosInfo *)&msg;
+				SockMsgServerNosInfo *msg_nos_info = (SockMsgServerNosInfo *)&sock_msg;
+				//sock_inf_os->recv_msg(sock_inf_os->sockfd, &msg_nos_info, sizeof(msg_nos_info));
 
-				Task *task = task_message_create(nos_info_task, &msg, 50);
-
-				SockMsgServerNosInfo *msg_nos_info = (SockMsgServerNosInfo *)&task->msg;
 				msg_nos_info->npuos = npuos;
+				Task *task = task_message_create(nos_info_task, msg_nos_info, 50);
 
 				task_submit(sched, task);
 
@@ -467,15 +484,12 @@ void *sock_npuos_handler(void *args)
 
 			case CL_DMKILL :
 			{
-#if (NEST_DBG==1)
-				printf("sock npuos_handler %d : DMKILL\n", npuos->id);
-#endif
-				//SockMsgServerDmkill *msg_dmkill = (SockMsgServerDmkill *)&msg;
+				SockMsgServerDmkill *msg_dmkill = (SockMsgServerDmkill *)&sock_msg;
 
-				Task *task = task_message_create(super_task, &msg, 255);
+				//sock_inf_os->recv_msg(sock_inf_os->sockfd, &msg_dmkill, sizeof(msg_dmkill));
 
-				SockMsgServerDmkill *msg_dmkill = (SockMsgServerDmkill *)&task->msg;
 				msg_dmkill->npuos = npuos;
+				Task *task = task_message_create(super_task, msg_dmkill, 255);
 
 				task_submit(sched, task);
 
@@ -486,18 +500,9 @@ void *sock_npuos_handler(void *args)
 				break;
 
 			default :
-			{
-#if (NEST_DBG==1)
-				printf("Unknown message is arrived!! Please check the system!\n");
-#endif
-			}
 				break;
 		}
 	}
-
-#if (NEST_DBG==1)
-	printf("OS handler %d exits!\n", npuos->id);
-#endif
 
 	return 0;
 }
@@ -521,13 +526,6 @@ void npuos_sock_init(NpuOS *npuos)
 	sock_inf_os->server_addr.sin_addr.s_addr = inet_addr(npuos->server_ip);
         sock_inf_os->server_addr.sin_port = htons(SERVER_PORT);
 
-        // server socket (for UDP client)
-        if ((sock_inf_os->sockfd = socket(AF_INET, SOCK_DGRAM, 0)) == -1) //
-        {
-                fprintf(stderr, "Server : socket creation failed\n");
-                exit(1);
-        }
-
 	npuos->sock_inf_os = sock_inf_os;
 }
 
@@ -535,21 +533,27 @@ void npuos_sock_connect(NpuOS *npuos)
 {
 	SockInf *sock_inf_os = npuos->sock_inf_os;
 
+	int server_fd = sock_inf_os->client_connect(npuos->server_ip, SERVER_PORT); // ip & port
+	sock_inf_os->sockfd = server_fd;
+
         SockMsgOSConnect msg_connect = {OS_CONN, npuos->id, npuos->wsmem_size, npuos->state};
-        sock_inf_os->send_msg(sock_inf_os->sockfd, &msg_connect, sizeof(msg_connect), (struct sockaddr *) &sock_inf_os->server_addr);
+	//int msg_type = msg_connect.mtype;
+	//sock_inf_os->send_msg(server_fd, &msg_type, sizeof(msg_type));
+	SockMessage sock_msg;
+	memcpy(&sock_msg, &msg_connect, sizeof(msg_connect));
 
-        SockMessage msg;
-        socklen_t src_len = sizeof(sock_inf_os->server_addr);
-        sock_inf_os->recv_msg(sock_inf_os->sockfd, &msg, (struct sockaddr *) &sock_inf_os->server_addr, &src_len);
-        SockMsgClientEcho *echo_msg = (SockMsgClientEcho *)&msg;
+	sock_inf_os->send_msg(server_fd, &sock_msg, sizeof(sock_msg));
 
-        if (echo_msg->mtype!=ECHO_OK)
+	SockMsgClientEcho echo_msg;
+	sock_inf_os->recv_msg(server_fd, &echo_msg, sizeof(echo_msg));
+
+        if (echo_msg.mtype!=ECHO_OK)
         {
                 printf("os connect error !!\n");
         }
         else
         {
-                npuos->id = echo_msg->osid;
+                npuos->id = echo_msg.osid;
                 printf("[NOS]: NPU OS ID %d is connected to the server\n", npuos->id);
         }
 }

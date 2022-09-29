@@ -27,3 +27,28 @@ double what_time_is_it_now(void)
     }
     return (double)time.tv_sec + (double)time.tv_usec * .000001;
 }
+
+struct timeval what_time(void)
+{
+    struct timeval time;
+    if (gettimeofday(&time,NULL))
+    {
+	printf("get time error\n");
+    }
+    return time;
+}
+
+struct timeval what_time_diff(struct timeval t1, struct timeval t2)
+{
+    struct timeval tdiff;
+
+    tdiff.tv_sec = t2.tv_sec - t1.tv_sec;
+    tdiff.tv_usec = t2.tv_usec - t1.tv_usec;
+
+    return tdiff;
+}
+
+double timeval_to_double(struct timeval time)
+{
+    return (double)time.tv_sec + (double)time.tv_usec * .000001;
+}

@@ -18,4 +18,7 @@
 #ifndef UTIL_TIME_H
 #define UTIL_TIME_H
 double what_time_is_it_now(void);
+struct timeval what_time(void);
+struct timeval what_time_diff(struct timeval t1, struct timeval t2);
+double timeval_to_double(struct timeval time);
 #endif

@@ -32,6 +32,7 @@ typedef struct detection
     int sort_class;
 } Detection;
 
+//Detection *network_get_boxes(Network *net, int w, int h, float thresh, float hier, int *map, int relative, int *num);
 void do_nms_sort(Detection *dets, int total, int classes, float thresh);
 void do_nms_obj(Detection *dets, int total, int classes, float thresh);
 #endif

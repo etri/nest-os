@@ -81,6 +81,56 @@ static double server_npuos_get_wcet(ServerNpuOS *nos, int nnid, int part_num_sta
         }
 }
 
+static void server_npuos_set_nnid(ServerNpuOS *nos, int nnid)
+{
+	int p, q;
+
+	p = nnid/64;
+	q = nnid%64;
+
+	nos->nnid[p] |= (1 << q);
+}
+
+static void server_npuos_clear_nnid(ServerNpuOS *nos, int nnid)
+{
+	int p, q;
+
+	p = nnid/64;
+	q = nnid%64;
+
+	nos->nnid[p] &= ~(1 << q);
+}
+
+static int server_npuos_is_nnid_set(ServerNpuOS *nos, int nnid)
+{
+	int p, q;
+
+	p = nnid/64;
+	q = nnid%64;
+
+	return (nos->nnid[p] & (1 << q));
+}
+
+#if 0
+static void print_all_nnid_set(ServerNpuOS *nos)
+{
+	for (int i=0; i<4; i++)
+	{
+		if (nos->nnid[i])
+		{
+			for (int j=0; j<64; j++)
+			{
+				if (nos->nnid[i] & (1 << j))
+				{
+					nnid = i*64 + j;
+					printf("%d:", nnid);
+				}
+			}
+		}
+	}
+}
+#endif
+
 ServerNpuOS *server_npuos_create(void)
 {
         ServerNpuOS *npuos = malloc(sizeof(ServerNpuOS));
@@ -94,17 +144,29 @@ ServerNpuOS *server_npuos_create(void)
 
         npuos->state = OS_DORMANT;
         npuos->ntasks = 0;
+	npuos->nos_fd = -1;
 
 	for (int i=0; i<256; i++)
+	{
 		npuos->q[i] = NULL;
+	}
 
 	npuos->ewt = 0.0;
 	//npuos->ntq = ntaskq_create();
+
+	for (int i=0; i<4; i++)
+	{
+		npuos->nnid[i] = 0;
+	}
         
 	npuos->wsmem_size = 0;
 
 	npuos->update_wcet = server_npuos_update_wcet;
 	npuos->get_wcet = server_npuos_get_wcet;
+
+	npuos->set_nnid = server_npuos_set_nnid;
+	npuos->clear_nnid = server_npuos_clear_nnid;
+	npuos->is_nnid_set = server_npuos_is_nnid_set;
 
         return npuos;
 }

@@ -20,6 +20,7 @@ as the name is changed.
 #include <math.h>
 #include <assert.h>
 #include "image.h"
+//#include "network.h"
 #include "cwd.h"
 
 #define STB_IMAGE_IMPLEMENTATION

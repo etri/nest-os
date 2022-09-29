@@ -86,10 +86,14 @@ void msgq_inf_destroy(MsgQInf *msgq_inf)
 	free(msgq_inf);
 }
 
-static void sock_send_msg(int sockfd, void *msg, size_t msg_len, const struct sockaddr *dest_addr)
+#if 0
+static void sock_send_udp_msg(int sockfd, void *msg, size_t msg_len, const struct sockaddr *dest_addr)
 {
 	int n;
 
+#if (NEST_DBG==1)
+        printf("[NEST_DBG]: sock send msg starts\n");
+#endif
 	n = sendto(sockfd, (const void *) msg, msg_len, MSG_CONFIRM, dest_addr, sizeof(*dest_addr));
 
 	if (n == -1)
@@ -99,14 +103,20 @@ static void sock_send_msg(int sockfd, void *msg, size_t msg_len, const struct so
 	}
 	else
 	{
+#if (NEST_DBG==1)
+        printf("[NEST_DBG]: sock recv msg finished\n");
+#endif
                 //printf("Msg Sent (sock)\n");
 	}
 }
 
-static void sock_recv_msg(int sockfd, SockMessage *msg, struct sockaddr *src_addr, socklen_t *src_len)
+static void sock_recv_udp_msg(int sockfd, SockMessage *msg, struct sockaddr *src_addr, socklen_t *src_len)
 {
 	int n;
 
+#if (NEST_DBG==1)
+        printf("[NEST_DBG]: sock recv msg starts\n");
+#endif
 	n = recvfrom(sockfd, msg, MESSAGE_SIZE, MSG_WAITALL, (struct sockaddr *) src_addr, src_len);	
 	if (n == -1)
 	{
@@ -115,9 +125,13 @@ static void sock_recv_msg(int sockfd, SockMessage *msg, struct sockaddr *src_add
 	}
 	else
 	{
+#if (NEST_DBG==1)
+        printf("[NEST_DBG]: sock recv msg finished\n");
+#endif
                 //printf("Msg Received (sock)\n");
 	}
 }
+#endif
 
 #define MAX_UDP_PAYLOAD 1024
 
@@ -272,6 +286,8 @@ static int sock_server_init(int *server_fd, int port)
 		exit(1);
 	}
 
+	//printf("server_fd : %d\n", *server_fd);
+
 	struct sockaddr_in server_addr;
 	memset(&server_addr, 0, sizeof(server_addr));
 
@@ -301,22 +317,22 @@ static int sock_server_init(int *server_fd, int port)
 	return *server_fd;
 }
 
-static int sock_server_accept(int *server_fd)
+static int sock_server_accept(int *server_fd, char *addr_str)
 {
 	struct sockaddr_in client_addr;
 	socklen_t len = sizeof(client_addr);
 
-	char temp[20];
+	//char temp[20];
 	int client_fd = accept(*server_fd, (struct sockaddr *)&client_addr, &len);
-        if(client_fd < 0)
+        if (client_fd < 0)
         {
          	perror("TCP Server: accept failed.\n");
             	exit(1);
         }
 
-        inet_ntop(AF_INET, &client_addr.sin_addr.s_addr, temp, sizeof(temp));
+        inet_ntop(AF_INET, &client_addr.sin_addr.s_addr, addr_str, SOCKADDR_LEN);
 #if (NEST_DBG==1)
-        printf("[NEST_DBG]: TCP Server: %s client connected.\n", temp);
+        printf("[NEST]: TCP Server: %s client connected.\n", temp);
 #endif
     
 	return client_fd;
@@ -372,8 +388,8 @@ SockInf *sock_inf_create(void)
 	sock_inf->os_addr_len = sizeof(sock_inf->os_addr);
 
 	// UDP messages
-	sock_inf->send_msg = sock_send_msg;
-	sock_inf->recv_msg = sock_recv_msg;
+	sock_inf->send_msg = sock_send_data;
+	sock_inf->recv_msg = sock_recv_data;
 
 	// TCP messages
 	sock_inf->send_data = sock_send_data;

@@ -31,7 +31,7 @@
 #define SCHED_DBG	0
 
 // mnt(min number of tasks)
-static int scheduler_mnt(Scheduler *scheduler, int nnid, int part_num_start, int part_num_delta, unsigned int affinity_mask)
+static int scheduler_mnt(Scheduler *scheduler, int nnid, int part_num_start, int part_num_delta, unsigned int affinity_mask, unsigned int *mbits_r)
 {
 #if (SCHED_DBG==1)
 	printf("scheduler_mnt :\n");
@@ -45,11 +45,12 @@ static int scheduler_mnt(Scheduler *scheduler, int nnid, int part_num_start, int
 	bits = nnpos->mask_nos_bit_match(nnpos, part_num_start, part_num_delta);
 
 	mbits = bits & affinity_mask;
+	*mbits_r = mbits;
 
 	int min_ntasks = INT_MAX;
 	if (mbits)
 	{
-		for (int i=0; i<scheduler->npuos_num; i++)
+		for (int i=0; i<scheduler->npuos_num_max; i++)
 	   	{
 			if (mbits & (1<<i))
 			{
@@ -74,7 +75,7 @@ static int scheduler_mnt(Scheduler *scheduler, int nnid, int part_num_start, int
 }
 
 // mwct(min worst-case completion time)
-static int scheduler_mwct(Scheduler *scheduler, int nnid, int part_num_start, int part_num_delta, unsigned int affinity_mask)
+static int scheduler_mwct(Scheduler *scheduler, int nnid, int part_num_start, int part_num_delta, unsigned int affinity_mask, unsigned int *mbits_r)
 {
 #if (SCHED_DBG==1)
 	printf("scheduler_mwct :\n");
@@ -89,11 +90,12 @@ static int scheduler_mwct(Scheduler *scheduler, int nnid, int part_num_start, in
 	bits = nnpos->mask_nos_bit_match(nnpos, part_num_start, part_num_delta);
 
 	mbits = bits & affinity_mask;
+	*mbits_r = mbits;
 
 	double mintime = DBL_MAX;
 	if (mbits)
 	{
-		for (int i=0; i<scheduler->npuos_num; i++)
+		for (int i=0; i<scheduler->npuos_num_max; i++)
 	   	{
 			if (mbits & (1<<i))
 			{
@@ -126,17 +128,20 @@ Scheduler *scheduler_create(void)
 		exit(1);
 	}
 
-	for (int i=0; i<256; i++)
+	for (int i=0; i<MAX_NNID_NUM; i++)
 	{
 		scheduler->nnpos[i] = nnpos_create();
 	}
 
 	scheduler->npuos_num = 0;
+	scheduler->npuos_num_max = 0;
 
 	for (int i=0; i<MAX_NOS_NUM; i++)
 	{
 		scheduler->nos[i] = NULL;
 	}
+
+	scheduler->function = NULL;
 
 	scheduler->mnt = scheduler_mnt;
 	scheduler->mwct = scheduler_mwct;
@@ -148,7 +153,7 @@ void scheduler_free(Scheduler *scheduler)
 {
 	if (scheduler)
 	{
-		for (int i=0; i<256; i++)
+		for (int i=0; i<MAX_NNID_NUM; i++)
 		{
 			nnpos_free(scheduler->nnpos[i]);
 		}

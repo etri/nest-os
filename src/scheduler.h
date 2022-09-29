@@ -19,19 +19,22 @@
 #define SCHEDULER_H
 
 #define MAX_NOS_NUM	32
+#define MAX_NNID_NUM	256	
+
 #include "nos_bit.h"
 #include "server_npuos.h"
 
 typedef struct scheduler
 {
-	NnPos *nnpos[256];
+	NnPos *nnpos[MAX_NNID_NUM]; // 256 = max # of NNIDs
 	int npuos_num;
+	int npuos_num_max;
         ServerNpuOS *nos[MAX_NOS_NUM];
 
-	int (*function)(struct scheduler *sched, int nnid, int part_num_start, int part_num_delta, unsigned int affinity_mask);
+	int (*function)(struct scheduler *sched, int nnid, int part_num_start, int part_num_delta, unsigned int affinity_mask, unsigned int *mbits_r);
 
-	int (*mnt)(struct scheduler *sched, int nnid, int part_num_start, int part_num_delta, unsigned int affinity_mask);
-	int (*mwct)(struct scheduler *sched, int nnid, int part_num_start, int part_num_delta, unsigned int affinity_mask);
+	int (*mnt)(struct scheduler *sched, int nnid, int part_num_start, int part_num_delta, unsigned int affinity_mask, unsigned int *mbits_r);
+	int (*mwct)(struct scheduler *sched, int nnid, int part_num_start, int part_num_delta, unsigned int affinity_mask, unsigned int *mbits_r);
 } Scheduler;
 
 Scheduler *scheduler_create(void);

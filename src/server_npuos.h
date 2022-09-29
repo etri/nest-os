@@ -35,16 +35,22 @@ typedef struct server_npu_os
 {
         int id; // os_index
 	char ip[20]; // ipv4 address of npu os
+	int nos_fd; // file descriptof of nos
         int state; // OS_RUN, OS_WAIT
         int ntasks; // number of tasks requested
 	Queue *q[256]; // partition queue contains the worst case expected prediction time taken for each model
 	double ewt; // (ewt): expected waiting time
+	uint64_t nnid[4]; // nnid[3] nnid[2] nnid[1] nnid[0]
 
 	int wsmem_size;
 	struct sockaddr_in os_addr;
 
 	void (*update_wcet)(struct server_npu_os *nos, int nnid, int part_num_start, int part_num_delta, double new_wcet);
 	double (*get_wcet)(struct server_npu_os *nos, int nnid, int part_num_start, int part_num_delta);
+
+	void (*set_nnid)(struct server_npu_os *nos, int nnid);
+	void (*clear_nnid)(struct server_npu_os *nos, int nnid);
+	int  (*is_nnid_set)(struct server_npu_os *nos, int nnid);
 } ServerNpuOS;
 
 ServerNpuOS *server_npuos_create(void);

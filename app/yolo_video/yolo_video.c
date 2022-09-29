@@ -1,20 +1,3 @@
-/*****************************************************************************
-*
-* Copyright Next-Generation System Software Research Group, All rights reserved.
-* Future Computing Research Division, Artificial Intelligence Reserch Laboratory
-* Electronics and Telecommunications Research Institute (ETRI)
-*
-* THESE DOCUMENTS CONTAIN CONFIDENTIAL INFORMATION AND KNOWLEDGE
-* WHICH IS THE PROPERTY OF ETRI. NO PART OF THIS PUBLICATION IS
-* TO BE USED FOR ANY OTHER PURPOSE, AND THESE ARE NOT TO BE
-* REPRODUCED, COPIED, DISCLOSED, TRANSMITTED, STORED IN A RETRIEVAL
-* SYSTEM OR TRANSLATED INTO ANY OTHER HUMAN OR COMPUTER LANGUAGE,
-* IN ANY FORM, BY ANY MEANS, IN WHOLE OR IN PART, WITHOUT THE
-* COMPLETE PRIOR WRITTEN PERMISSION OF ETRI.
-*
-* LICENSE file : README_LICENSE_ETRI located in the top directory
-*
-*****************************************************************************/
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -43,10 +26,10 @@ static void ntask_input_handler(Ntask *nt)
         nt->set_data_input(nt, 0, 32+im.h*im.w*im.c*sizeof(float));
 }
 
-int output_offset, output_size;
-
 static void ntask_output_handler(Ntask *nt)
 {
+	int output_offset, output_size;
+
 	nt->get_data_output(nt, &output_offset, &output_size);
         //printf("output data : offset = %d size = %d\n", output_offset, output_size);
 
@@ -66,13 +49,14 @@ static int inference_and_show(Ntask *nt)
 		return 1; // demo terminated
 	}
 
-    	double time1=what_time_is_it_now();
+    	//double time1=what_time_is_it_now();
     	nt->run(nt);
-    	double time2=what_time_is_it_now();
-    	printf("Prediction: %f secs\n", time2 - time1);
+    	//double time2=what_time_is_it_now();
+    	//printf("Prediction: %f secs\n", time2 - time1);
+    	printf("Prediction: %f secs mask: %x\n", nt->get_time(nt), nt->get_nos_mask(nt));
 
        	// display the output
-       	Image *im_out = (Image *)(nt->get_memory_pointer(nt)+output_offset);
+       	Image *im_out = (Image *)(nt->get_memory_pointer(nt)+nt->outdata_start_offset);
 	int c = show_image(*im_out, "Demo", 1);
     	if (c != -1) 
 	{
@@ -110,7 +94,7 @@ int main(int argc, char *argv[])
         make_window("Demo", 1352/DIVIDER, 1013/DIVIDER, fullscreen);
 
 	Ntask *nt = ntask_create("nt", MODEL_NAME, ntask_input_handler, ntask_output_handler);
-	//nt->affinity(nt, MASK(1)); // for NPU affinity
+	//nt->set_affinity(nt, MASK(1)); // for NPU affinity
 
 	// infinite loop
 	volatile int demo_done = 0;

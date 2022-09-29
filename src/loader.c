@@ -31,6 +31,7 @@
 #include "msgq_inf.h"
 #include "sock_inf.h"
 #include "bit_handler.h"
+//#include "util_time.h"
 
 static void sock_portnum_init(Loader *loader)
 {
@@ -80,12 +81,15 @@ static int loader_load(Loader *loader, int nnid, int osid)
 	}
 
 	// precheck if load can be made. if kernel is already loaded, load cannot be done
+//double start = what_time_is_it_now();
 	msg_load.port = loader->port; 
         loader->msgq_inf->send_msg(loader->msgq_inf->msgq_server, &msg_load);
 
 	// receive3 ack for precheck load (Server->app)
 	Message rmsg;
 	loader->msgq_inf->recv_msg(loader->msgq_inf->msgq_client, &rmsg);
+//double elapsed = what_time_is_it_now() - start;
+//printf("ipc round trip time = %f\n", elapsed);
 
 	// load is progressing
 	if (rmsg.mtype == ECHO_ERR)
@@ -99,7 +103,8 @@ static int loader_load(Loader *loader, int nnid, int osid)
 	}
         else if (loader->file_size) // in case of file load
         {
-		int loader_fd = loader->sock_inf->server_accept(&server_fd);
+		char client_addr[SOCKADDR_LEN];
+		int loader_fd = loader->sock_inf->server_accept(&server_fd, client_addr);
 
                	loader->sock_inf->send_filename(loader_fd, loader->file_name);
                	loader->sock_inf->send_file(loader_fd, loader->fd, loader->file_size);

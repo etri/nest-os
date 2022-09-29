@@ -33,6 +33,7 @@
 #include "server_npuos.h"
 #include "msgq_inf.h"
 #include "sock_inf.h"
+//#include "util_time.h"
 
 #define NEST_DBG	0
 
@@ -41,6 +42,7 @@ static volatile int server_done = 0;
 static MsgQInf *msgq_inf_server;
 static SockInf *sock_inf_server;
 static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+static int server_fd;
 
 static void server_msgq_create(void)
 {
@@ -51,55 +53,175 @@ static void server_msgq_create(void)
 static void server_sock_create(void)
 {
 	sock_inf_server = sock_inf_create();
-
-	memset(&sock_inf_server->server_addr, 0, sizeof(sock_inf_server->server_addr));
-	memset(&sock_inf_server->os_addr, 0, sizeof(sock_inf_server->os_addr));
-
-	sock_inf_server->server_addr.sin_family = AF_INET;
-	sock_inf_server->server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-	sock_inf_server->server_addr.sin_port = htons(SERVER_PORT);
-
-	// server socket
-	if ((sock_inf_server->sockfd = socket(AF_INET, SOCK_DGRAM, 0)) == -1) //
-	{
-		fprintf(stderr, "Server : socket creation failed\n");
-		exit(1);
-	}
-
-	// bind
-	if (bind(sock_inf_server->sockfd, (struct sockaddr *)&sock_inf_server->server_addr, sizeof(sock_inf_server->server_addr)) < 0)
-	{
-		fprintf(stderr, "Server : socket bind failed\n");
-		exit(1);
-	}
+	sock_inf_server->server_init(&server_fd, SERVER_PORT);
 }
 
-// socket communication handler
+static int nos_fds[MAX_NOS_NUM];
+static int nos_client_connection[MAX_NOS_NUM] = {0, };
+static volatile int client_num = 0;
+static volatile int client_num_max = 0;
+static int nos_ids[MAX_NOS_NUM];
+
+//nos_client communication handler
 void *sockcomm_handler(void *args)
 {
-	Server *server = (Server *)args;
-	SockMessage msg;
-	printf("[NEST]: Server SOCK daemon is ready!\n");
+   Server *server = (Server *)args;
+   printf("[NEST]: Server SOCK daemon is ready!\n");
 
-	while (!server_done)
+   fd_set rx_set;
+   fd_set wk_set;
+
+   FD_ZERO(&rx_set);
+   FD_SET(server_fd, &rx_set);
+
+   int max_fd = server_fd;
+
+   while (!server_done)
+   {
+	FD_ZERO(&wk_set);
+	wk_set = rx_set;
+
+	int activity = select(max_fd + 1 , &wk_set , NULL , NULL , NULL);
+	if (activity < 0)
+        {
+           	printf("select error");
+        }
+
+	if (FD_ISSET(server_fd, &wk_set))
 	{
-		sock_inf_server->recv_msg(sock_inf_server->sockfd, &msg, (struct sockaddr *) &sock_inf_server->os_addr, &sock_inf_server->os_addr_len);
-
-		switch (msg.mtype)
+		int client_fd = 0;
+		char client_addr[SOCKADDR_LEN];
+		client_fd = sock_inf_server->server_accept(&server_fd, client_addr);
+		if (client_fd > 0) // new client is arrived
 		{
+			int client_id;
+
+			FD_SET(client_fd, &rx_set);
+
+			if (client_fd > max_fd)
+				max_fd = client_fd;
+
+			// find the empty slot in nos_fds[]. if an empty slot exists, use it for channel
+			
+			int quit = 0;
+			int i;
+			for (i=0; i<client_num_max; i++)
+			{
+				if (nos_client_connection[i] == -1) // if the connection is dead, keep it alive later
+				{
+					//client_id = i;
+					quit = 1;
+					//printf("Reuse the empty channel\n");
+					break;
+				}
+			}
+
+			client_id = i;
+
+			if (quit==0 && client_num_max<31) // not found the empty slot, increase the max
+			{
+				//printf("Increase the channel\n");
+
+				client_num_max++;
+			}
+			else if (client_num_max >= 31)
+			{
+				printf("Error: cannot assign client channel. The number of maximum channels is 32\n");
+				exit(1);
+			}
+
+			nos_fds[client_id] = client_fd;
+			nos_client_connection[client_id] = 1; // make it alive
+
+			client_num++;
+
+			//printf("nos_fds[%d] = %d\n", client_id, client_fd);
+
+			//printf("client_fd is accepted and client_num : %d\n", client_num);
+			printf("client (nos) is accepted. IP addr: %s\n", client_addr);
+		}
+
+		continue;
+	}
+
+	for (int i=0; i<client_num_max; i++)
+	{
+	     int nos_fd = nos_fds[i];
+
+	     if (!nos_client_connection[i]) // if the connection is dead
+	     {
+		ServerNpuOS *nos = server->scheduler->nos[i];
+
+		// free ServerNpuOS info
+		server_npuos_free(nos);
+		nos = NULL;
+
+		server->scheduler->npuos_num--;
+
+		server->scheduler->nos[i] = NULL;
+
+		printf("%d NPU OS is running\n", server->scheduler->npuos_num);
+		client_num--;
+
+		FD_CLR(nos_fd, &rx_set);
+		close(nos_fd);
+
+		nos_client_connection[i] = -1; // channel can be reused later
+		nos_ids[i] = -1; // nos ID (osid) can be reused later
+
+		continue;
+	     }
+
+	     if (FD_ISSET(nos_fd, &wk_set))
+	     {
+		//printf("nos_fd : %d\n", nos_fd);
+
+	  	//int msg_type;
+		SockMessage sock_msg;
+		//sock_inf_server->recv_msg(nos_fd, &msg_type, sizeof(msg_type));
+		sock_inf_server->recv_msg(nos_fd, &sock_msg, sizeof(sock_msg));
+
+		switch (sock_msg.mtype)
+		{
+#if 1
 			case OS_CONN :
 			{
 #if (NEST_DBG==1)
 				printf("[NEST_DBG]: os_conn signal received!\n");
 #endif
-				SockMsgOSConnect *msg_connect = (SockMsgOSConnect *)&msg;
+				SockMsgOSConnect *msg_connect = (SockMsgOSConnect *)&sock_msg;
+				//sock_inf_server->recv_msg(nos_fd, &msg_connect, sizeof(msg_connect));
+
 				ServerNpuOS *nos;
 				SockMsgClientEcho echo_msg;
 				int osid;
 
 				if (msg_connect->id == -1)
 				{
-					osid = server->scheduler->npuos_num;
+					int i;
+					int quit = 0;
+					for (i=0; i<server->scheduler->npuos_num_max; i++)
+					{
+						if (nos_ids[i]==-1) // found it
+						{
+							quit = 1;
+							break;
+						}
+					}
+
+					osid = i;
+					nos_ids[i] = osid;
+
+					if (quit==0 && server->scheduler->npuos_num_max<31) // not found the empty slot, increase the max
+					{
+						//printf("Increase the os id\n");
+						server->scheduler->npuos_num_max++;
+					}
+					else if (server->scheduler->npuos_num_max >= 31)
+					{
+						printf("Error: cannot assign osid number. The number of maximum osid is 32\n");
+						exit(1);
+					}
 				}
 				else if (msg_connect->id > -1)
 				{
@@ -122,16 +244,20 @@ void *sockcomm_handler(void *args)
 					// create ServerNpuOS info
 					nos = server_npuos_create();
 					nos->id = osid;
+					nos->nos_fd = nos_fd;
 					nos->wsmem_size = msg_connect->wsmem_size;
 					nos->state = msg_connect->state;
 					nos->os_addr = sock_inf_server->os_addr;
 
-					inet_ntop(AF_INET, &sock_inf_server->os_addr.sin_addr.s_addr, nos->ip, sizeof(nos->ip));
+					//inet_ntop(AF_INET, &sock_inf_server->os_addr.sin_addr.s_addr, nos->ip, sizeof(nos->ip));
 
 					server->scheduler->nos[osid] = nos;
 
 					server->scheduler->npuos_num++;
-					printf("[NEST]: %d NPU OS (ID: %d, IP: %s) is running\n", server->scheduler->npuos_num, osid, nos->ip);
+					//if (server->scheduler->npuos_num > server->scheduler->npuos_num_max)
+					//	server->scheduler->npuos_num_max = server->scheduler->npuos_num;
+
+					printf("[NEST]: %d NPU OS (ID: %d) is running\n", server->scheduler->npuos_num, osid);
 					echo_msg.mtype = ECHO_OK;
 					echo_msg.osid = osid;
 				}
@@ -140,16 +266,19 @@ void *sockcomm_handler(void *args)
 					printf("Error: NPU OS ID %d is already running\n", msg_connect->id);
 					echo_msg.mtype = ECHO_ERR;
 				}
-				sock_inf_server->send_msg(sock_inf_server->sockfd, &echo_msg, sizeof(echo_msg), (struct sockaddr *) &sock_inf_server->os_addr);
+				sock_inf_server->send_msg(nos_fd, &echo_msg, sizeof(echo_msg));
+
 			}
 				break;
+#endif
 
 			case OS_DISCONN :
 			{
 #if (NEST_DBG==1)
 				printf("[NEST_DBG]: os_disconn signal received!\n");
 #endif
-				SockMsgOSDisconnect *msg_disconnect = (SockMsgOSDisconnect *)&msg;
+				SockMsgOSDisconnect *msg_disconnect = (SockMsgOSDisconnect *)&sock_msg;
+				//sock_inf_server->recv_msg(nos_fd, &msg_disconnect, sizeof(msg_disconnect));
 
 				SockMsgClientEcho echo_msg;
 				if (server->scheduler->nos[msg_disconnect->id])
@@ -158,11 +287,17 @@ void *sockcomm_handler(void *args)
 
 					// free ServerNpuOS info
 					server_npuos_free(nos);
+					nos = NULL;
 
 					server->scheduler->npuos_num--;
 
 					server->scheduler->nos[msg_disconnect->id] = NULL;
+
 					printf("%d NPU OS is running\n", server->scheduler->npuos_num);
+					client_num--;
+
+					nos_ids[msg_disconnect->id] = -1; // nos ID (osid) can be reused later
+
 					echo_msg.mtype = ECHO_OK;
 				}
 				else
@@ -180,7 +315,8 @@ void *sockcomm_handler(void *args)
 #if (NEST_DBG==1)
 				printf("[NEST_DBG]: os_load_echo signal received!\n");
 #endif
-				SockMsgOSEcho *msg_echo = (SockMsgOSEcho *) &msg;
+				SockMsgOSEcho *msg_echo = (SockMsgOSEcho *)&sock_msg;
+				//sock_inf_server->recv_msg(nos_fd, &msg_echo, sizeof(msg_echo));
 				MsgClientEcho echo_cli;
 				if (msg_echo->rtype == ECHO_OK)
 				{ 
@@ -202,7 +338,8 @@ void *sockcomm_handler(void *args)
 #if (NEST_DBG==1)
 				printf("[NEST_DBG]: os_unload_echo signal received!\n");
 #endif
-				SockMsgOSEcho *msg_echo = (SockMsgOSEcho *) &msg;
+				SockMsgOSEcho *msg_echo = (SockMsgOSEcho *)&sock_msg; 
+				//sock_inf_server->recv_msg(nos_fd, &msg_echo, sizeof(msg_echo));
 				MsgClientEcho echo_cli;
 				if (msg_echo->rtype == ECHO_OK)
 				{ 
@@ -224,7 +361,8 @@ void *sockcomm_handler(void *args)
 #if (NEST_DBG==1)
 				printf("[NEST_DBG]: os_predict_echo signal received!\n");
 #endif
-				SockMsgOSPredictEcho *msg_echo = (SockMsgOSPredictEcho *) &msg;
+				SockMsgOSPredictEcho *msg_echo = (SockMsgOSPredictEcho *)&sock_msg;
+				//sock_inf_server->recv_msg(nos_fd, &msg_echo, sizeof(msg_echo));
 
 				if (server->scheduler->function == server->scheduler->mwct)
 				{
@@ -255,7 +393,8 @@ void *sockcomm_handler(void *args)
 #if (NEST_DBG==1)
 				printf("[NEST_DBG]: os_nos_info_echo signal received!\n");
 #endif
-				SockMsgOSNosInfoEcho *msg_echo = (SockMsgOSNosInfoEcho *) &msg;
+				SockMsgOSNosInfoEcho *msg_echo = (SockMsgOSNosInfoEcho *)&sock_msg;
+
 				MsgClientNosInfoEcho echo_msg;
 				echo_msg.mtype = msg_echo->rtype;
 				echo_msg.query_reply = msg_echo->query_reply;
@@ -266,11 +405,11 @@ void *sockcomm_handler(void *args)
 			default :
 				break;
 		}
+	      }
 	}
+   }
 
-	close(sock_inf_server->sockfd);
-
-	return NULL;
+   return NULL;
 }
 
 // To Do : port number distributor must be more elaborated later!
@@ -309,7 +448,7 @@ static void server_handler(Server *server)
 	
 		switch (msg.mtype)
 		{
-			// inference client handler
+			// S1 : scheduling phase - determine the NPU OS
 			case CL_PREDICT_S1 :
 			{
 #if (NEST_DBG==1)
@@ -318,10 +457,11 @@ static void server_handler(Server *server)
 
 				MsgClientPredict *msg_predict = (MsgClientPredict *) &msg;
 
-				// determine the NPU OS
+				// determine the most proper NPU OS based on the task's affinity_mask, nnid(partition_number_start, partition_number_end)
 				Scheduler *scheduler = server->scheduler;
+				unsigned int mask; // output param; the resulting mask of NPU OS that match
 
-				int osid = scheduler->function(scheduler, msg_predict->nnid, msg_predict->part_num_start, msg_predict->part_num_delta, msg_predict->affinity_mask);
+				int osid = scheduler->function(scheduler, msg_predict->nnid, msg_predict->part_num_start, msg_predict->part_num_delta, msg_predict->affinity_mask, &mask);
 							
 #if (NEST_DBG==1)
 				printf("[NEST_DBG]: scheduled osid = %d\n", osid);
@@ -350,22 +490,25 @@ static void server_handler(Server *server)
 #endif
 
 					// send echo to the client
-					MsgClientEcho echo_msg;
+					//MsgClientEcho echo_msg;
 					echo_msg.mtype = ECHO_OK;
 					//echo_msg.inf_type = server->scheduler->nos[osid]->inf_type;
 					echo_msg.osid = osid;
+					echo_msg.mask = mask;
 			
 					msgq_inf_server->send_msg(msg_predict->mqid, &echo_msg);
 				}
 			}
 				break;
 
+			// S2 : launch phase - send the predict message to the NPU OS directly
 			case CL_PREDICT_S2 :
 			{
 #if (NEST_DBG==1)
 				printf("[NEST_DBG]: predict2 signal received!\n");
 #endif
 
+	//double start = what_time_is_it_now();
 				MsgClientPredict *msg_predict = (MsgClientPredict *) &msg;
 
 				int osid = msg_predict->osid;
@@ -378,7 +521,7 @@ static void server_handler(Server *server)
 				msg_server_predict.nnid = msg_predict->nnid;
 				msg_server_predict.input_type = msg_predict->input_type;
 				msg_server_predict.infile_size = msg_predict->infile_size;
-				msg_server_predict.indata_start_offset = msg_predict->indata_start_offset;
+				msg_server_predict.indata_start_offset_remote = msg_predict->indata_start_offset_remote;
 				msg_server_predict.indata_size = msg_predict->indata_size;
 				msg_server_predict.indata_push = msg_predict->indata_push;
 				msg_server_predict.outdata_pull = msg_predict->outdata_pull;
@@ -401,7 +544,13 @@ static void server_handler(Server *server)
 					pthread_mutex_unlock(&mutex);
 				}
 
-				sock_inf_server->send_msg(sock_inf_server->sockfd, &msg_server_predict, sizeof(msg_server_predict), (struct sockaddr *) &server->scheduler->nos[osid]->os_addr);
+				SockMessage sock_msg;
+				memcpy(&sock_msg, &msg_server_predict, sizeof(msg_server_predict));
+
+				sock_inf_server->send_msg(server->scheduler->nos[osid]->nos_fd, &sock_msg, sizeof(sock_msg));
+	//double elapsed = what_time_is_it_now() -start;
+	//printf("tau_bro elapsed = %f\n", elapsed);
+
 			}
 				break;
 
@@ -452,7 +601,9 @@ static void server_handler(Server *server)
 				int part_num_start = msg_load->part_num_start;
 				int part_num_delta = msg_load->part_num_delta;
 
-				if (!server->scheduler->nos[osid])
+				ServerNpuOS *nos = server->scheduler->nos[osid];
+
+				if (!nos)
 				{ 
 					printf("LOAD Error: NpuOS does not exist\n");
 
@@ -468,12 +619,18 @@ static void server_handler(Server *server)
 					msgq_inf_server->send_msg(msg_load->mqid, &echo_msg);
 					break;
 				}
+				else
+				{
+					nos->set_nnid(nos, nnid);	
+				}
 
 				echo_msg.mtype = ECHO_OK;
 				msgq_inf_server->send_msg(msg_load->mqid, &echo_msg);
 				SockMsgServerLoad msg_server_load = {CL_LOAD, msg_load->mqid, msg_load->nnid, msg_load->filesize, msg_load->port, msg_load->part_num_start, msg_load->part_num_delta, NULL};
-				sock_inf_server->send_msg(sock_inf_server->sockfd, &msg_server_load, sizeof(msg_server_load), (struct sockaddr *) &server->scheduler->nos[osid]->os_addr);
+				SockMessage sock_msg;
+				memcpy(&sock_msg, &msg_server_load, sizeof(msg_server_load));
 
+				sock_inf_server->send_msg(nos->nos_fd, &sock_msg, sizeof(sock_msg));
 			}
 				break;
 
@@ -489,7 +646,9 @@ static void server_handler(Server *server)
 				int part_num_start = msg_unload->part_num_start;
 				int part_num_delta = msg_unload->part_num_delta;
 
-				if (!server->scheduler->nos[osid])
+				ServerNpuOS *nos = server->scheduler->nos[osid];
+
+				if (!nos)
 				{ 
 					printf("UNLOAD Error: NpuOS does not exist\n");
 
@@ -507,9 +666,21 @@ static void server_handler(Server *server)
 					msgq_inf_server->send_msg(msg_unload->mqid, &echo_msg);
 					break;
 				}
+				else
+				{
+					nnpos->clr_nos_bit(nnpos, osid, part_num_start, part_num_delta);
+					int allbit_zero = nnpos->nosbit[osid]->is_allbit_zero(nnpos->nosbit[osid]);
+					if (allbit_zero)
+					{
+						nos->clear_nnid(nos, nnid);
+					}
+				}
 
 				SockMsgServerUnload msg_server_unload = {CL_UNLOAD, msg_unload->mqid, msg_unload->nnid, msg_unload->filesize, msg_unload->part_num_start, msg_unload->part_num_delta, NULL};
-				sock_inf_server->send_msg(sock_inf_server->sockfd, &msg_server_unload, sizeof(msg_server_unload), (struct sockaddr *) &server->scheduler->nos[osid]->os_addr);
+				SockMessage sock_msg;
+				memcpy(&sock_msg, &msg_server_unload, sizeof(msg_server_unload));
+
+				sock_inf_server->send_msg(nos->nos_fd, &sock_msg, sizeof(sock_msg));
 			}
 				break;
 
@@ -519,8 +690,64 @@ static void server_handler(Server *server)
 #if (NEST_DBG==1)
 				printf("[NEST_DBG]: dmkill signal received!\n");
 #endif
+				MsgClientDmkill *msg_dmkill = (MsgClientDmkill *) &msg;
+				unsigned int nos_mask = msg_dmkill->nos_mask;
 
-				server_done = 1;
+				if (nos_mask == ~0) // kill all NOSes connected
+				{
+					server_done = 1;
+				}
+				else
+				{
+					for (int i=0; i<server->scheduler->npuos_num_max; i++)
+					{
+						if (!(nos_mask & (1 << i))) continue;
+
+						int osid = i;
+
+						MsgServerDmkill msg_server_dmkill = {CL_DMKILL, NULL};
+
+	     					ServerNpuOS *nos = server->scheduler->nos[osid];
+
+						if (nos)
+						{
+	     						int nos_fd = nos->nos_fd;
+
+							SockMessage sock_msg;
+							memcpy(&sock_msg, &msg_server_dmkill, sizeof(msg_server_dmkill));
+							sock_inf_server->send_msg(nos_fd, &sock_msg, sizeof(sock_msg));
+
+							for (int p=0; p<4; p++)
+							{
+								if (nos->nnid[p])
+                						{
+                        						for (int q=0; q<64; q++)
+                        						{
+                                						if (nos->nnid[p] & ((uint64_t)1 << q)) // nos->nnid[x] is the 64bit unsigned integer
+                                						{
+                                        						int nnid = p*64 + q;
+                                        						//printf("%d:", nnid);
+											NnPos *nnpos = server->scheduler->nnpos[nnid];
+											nnpos->clr_nos_bit(nnpos, osid, 0, 127); // part_num_start = 0, part_num_end = 127
+                                						}
+                        						}
+                						}
+							}
+
+							// destroy nos structure
+							server_npuos_free(nos);
+							server->scheduler->nos[osid] = NULL;
+
+							//printf("nos_fd to close : %d\n", nos_fd);
+							
+							for (int j=0; j<client_num_max; j++)
+							{
+								if (nos_fds[j] == nos_fd)
+									nos_client_connection[j] = 0;
+							}
+						}
+					}
+				}
 			}
 				break;
 
@@ -585,7 +812,11 @@ static void server_handler(Server *server)
 				}
 
 				SockMsgServerNosInfo msg_server_nos_info = {CL_NOS_INFO, msg_info->mqid, queryid, NULL};
-				sock_inf_server->send_msg(sock_inf_server->sockfd, &msg_server_nos_info, sizeof(msg_server_nos_info), (struct sockaddr *) &server->scheduler->nos[osid]->os_addr);
+
+				SockMessage sock_msg;
+				memcpy(&sock_msg, &msg_server_nos_info, sizeof(msg_server_nos_info));
+
+				sock_inf_server->send_msg(server->scheduler->nos[osid]->nos_fd, &sock_msg, sizeof(sock_msg));
 			}
 				break;
 
@@ -609,25 +840,44 @@ static void server_close(Server *server)
 #if (NEST_DBG==1)
 	printf("join all the service thread list\n");
 #endif
-	for (int i=0; i<server->scheduler->npuos_num; i++)
+	for (int i=0; i<server->scheduler->npuos_num_max; i++)
 	{
 		MsgServerDmkill msg_server_dmkill = {CL_DMKILL, NULL};
 
-		sock_inf_server->send_msg(sock_inf_server->sockfd, &msg_server_dmkill, sizeof(msg_server_dmkill), (struct sockaddr *) &server->scheduler->nos[i]->os_addr);
+	     	ServerNpuOS *nos = server->scheduler->nos[i];
+
+		if (nos)
+		{
+	     		int nos_fd = nos->nos_fd;
+
+			SockMessage sock_msg;
+			memcpy(&sock_msg, &msg_server_dmkill, sizeof(msg_server_dmkill));
+			sock_inf_server->send_msg(nos_fd, &sock_msg, sizeof(sock_msg));
+
+			close(nos_fd); // close client_nos socket
+
+			server_npuos_free(nos);
+			server->scheduler->nos[i] = NULL;
+		}
 	}
 
+#if 0
 	// kill all npu_os()
 	for (int i=0; i<server->scheduler->npuos_num; i++)
 	{
 		server_npuos_free(server->scheduler->nos[i]);
+		server->scheduler->nos[i] = NULL;
 	}
+#endif
 
 	// remove the server message queue
 	//msgctl(mqid_server, IPC_RMID, 0);
 	msgctl(msgq_inf_server->msgq_server, IPC_RMID, 0);
+
+   	close(sock_inf_server->sockfd); // close master socket in server
 }
 
-static void server_set_scheduler(Server *server, int (scheduler_function)(Scheduler *sched, int nnid, int part_num_start, int part_num_delta, unsigned int affinity_mask))
+static void server_set_scheduler(Server *server, int (scheduler_function)(Scheduler *sched, int nnid, int part_num_start, int part_num_delta, unsigned int affinity_mask, unsigned int *mbits_r))
 {
 	server->scheduler->function = scheduler_function;
 	if (scheduler_function == server->scheduler->mwct)

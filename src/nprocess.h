@@ -29,6 +29,7 @@ typedef struct nprocess
 	char name[MAX_NAME_LENGTH];
 	void *memory_pointer;
 	int memory_size;
+	struct timeval time;
 
 	Ntask *head;
 	Ntask *tail;
@@ -38,6 +39,9 @@ typedef struct nprocess
 	int num_succ;
 	int num_vpred;
 	int num_vsucc;
+	pthread_mutex_t num_vpred_lock;
+        pthread_mutex_t num_vsucc_lock;
+
 	Ntask *pred[MAX_PRED_NUM];
 	Ntask *succ[MAX_SUCC_NUM];
 
@@ -46,6 +50,7 @@ typedef struct nprocess
    	void (*run)(struct nprocess *np);
         void (*exit)(struct nprocess *np);
 	void (*contain)(struct nprocess *np, int args, ...);
+	double (*get_time)(struct nprocess *np);
 } Nprocess;
 
 Nprocess *nprocess_create(char *name);

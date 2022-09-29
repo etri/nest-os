@@ -30,7 +30,7 @@ typedef struct server
         void (*open)(struct server *);
         void (*handler)(struct server *);
         void (*close)(struct server *);
-	void (*set_scheduler)(struct server *, int (*scheduler_function)(Scheduler *sched, int nnid, int part_num_start, int part_num_delta, unsigned int affinity_mask));
+	void (*set_scheduler)(struct server *, int (*scheduler_function)(Scheduler *sched, int nnid, int part_num_start, int part_num_delta, unsigned int affinity_mask, unsigned int *mbits_r));
 } Server;
 
 /* server APIs */

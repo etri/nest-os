@@ -29,7 +29,7 @@ void convert_to_bitstring(int start, int end, BitString *bs)
 		p = i/BIT_UNIT;
 		q = i%BIT_UNIT;
 
-		bs->bit[p] |= (1 << q);
+		bs->bit[p] |= (1ULL << q);
 	}
 }
 

@@ -42,19 +42,22 @@ typedef struct ntask
 	int priority;
 	int input_type;
 	int fd; // file description if input is file
+	int server_fd;
 	char *infile_name;
 	int infile_size;
 	void *memory_pointer;	
 	int memory_size;
-	int indata_start_offset;
+	int indata_start_offset; // src offset in client
+	int indata_start_offset_remote; // destination offset in nos
 	int indata_size;
-	int outdata_start_offset;
+	int outdata_start_offset; // destination offset in client
 	int outdata_size;
 	int indata_push;
 	int outdata_pull;
 	int port;
 	int part_num_start; // partition number
 	int part_num_delta;
+	struct timeval time;
 
 	void *np; // the process that contains this ntask
 	volatile pthread_t tid;
@@ -62,6 +65,8 @@ typedef struct ntask
         int num_succ;
         int num_vpred;
         int num_vsucc;
+	pthread_mutex_t num_vpred_lock;
+	pthread_mutex_t num_vsucc_lock;
         struct ntask *pred[MAX_PRED_NUM];
         struct ntask *succ[MAX_SUCC_NUM];
 
@@ -78,11 +83,13 @@ typedef struct ntask
 	void (*output_handler)(struct ntask *nt);
 	void *(*get_memory_pointer)(struct ntask *nt);
 	void (*set_data_input)(struct ntask *nt, int indata_start_offset, int indata_size);
+	void (*set_data_input_offset_remote)(struct ntask *nt, int indata_start_offset_remote);
 	void (*unset_data_input)(struct ntask *nt);
 	void (*get_data_output)(struct ntask *nt, int *outdata_start_offset, int *outdata_size);
 	void (*set_file_input)(struct ntask *nt, char *filename);
 	void (*unset_file_input)(struct ntask *nt);
 	unsigned int (*get_nos_mask)(struct ntask *nt);
+	unsigned int (*get_nos_mask_output)(struct ntask *nt);
         void (*set_affinity)(struct ntask *nt, unsigned int mask);
 	void (*set_priority)(struct ntask *nt, int priority);
 	void (*set_memory)(struct ntask *nt, void *memptr);
@@ -96,12 +103,13 @@ typedef struct ntask
 	void (*disable_data_push)(struct ntask *nt);
 	void (*disable_data_pull)(struct ntask *nt);
 	void (*next_nt)(struct ntask *nt, struct ntask *nt_next);
+	double (*get_time)(struct ntask *nt);
 } Ntask;
 
 Ntask *ntask_create(char *name, int nnid, void (*input_handler)(Ntask *nt), void (*output_handler)(Ntask *nt));
 Ntask *ntask_partition_create(char *name, int nnid, int part_num, void (*input_handler)(Ntask *nt), void (*output_handler)(Ntask *nt));
 Ntask *ntask_partition_range_create(char *name, int nnid, int part_num_start, int part_num_end, void (*input_handler)(Ntask *nt), void (*output_handler)(Ntask *nt));
 
-void daemon_kill(void);
+void daemon_kill(unsigned int nos_mask);
 
 #endif

@@ -17,4 +17,8 @@ as the name is changed.
 // when you execute nos_cpu in yolonet6 dir (e.g. os/nos in yolonet6)
 // anyway, this is the stcnpu home directory
 //#define WORK_DIR()	"os/"
+//#define WORK_DIR()	"os/yolov2/"
 #define WORK_DIR()
+
+// when you execute nos_cpu in yolonet6/stcnpu, leave it to be empty
+//#define WORK_DIR()	

@@ -18,6 +18,8 @@ as the name is changed.
 #include <stdlib.h>
 #include <math.h>
 #include "box.h"
+//#include "network.h"
+//#include "layer_api.h"
 
 float overlap(float x1, float w1, float x2, float w2)
 {

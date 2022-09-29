@@ -19,6 +19,7 @@
 #define SHARE_COMM_H
 
 #define MAX_NOS_NUM	32
+#define MAX_NNID_NUM	256
 
 #define NTASK_WSMEM_SIZE   64*1024*1024 // 64 MBytes
 #define NOS_WSMEM_SIZE 	 64*1024*1024 // 64 MBytes
@@ -32,6 +33,8 @@
 #define DEFAULT_SERVER_IP	"127.0.0.1" // local
 //#define SERVER_IP	"129.254.74.241" // cocoa
 //#define SERVER_IP	"192.168.0.4" // muse(129.254.74.87)
+
+#define SOCKADDR_LEN	20
 
 // all message types must be positive
 #define CL_PREDICT_S1	1
@@ -73,7 +76,7 @@
 #define LINUX   1
 #define RTOS    2
 
-// Client Message Structure 12*4(int) + 1*8(long) = 48+8 = 56 bytes
+// Client Message Structure 15*4(int) + 1*8(long) = 60+8 = 68 bytes
 typedef struct msg_client_predict
 {
         long mtype;
@@ -81,7 +84,7 @@ typedef struct msg_client_predict
 	int nnid; 	// neural_net type: YOLOV2(1 | CPU_ONLY)
 	int input_type;
 	int infile_size;
-	int indata_start_offset;
+	int indata_start_offset_remote;
 	int indata_size;
 	int indata_push;
 	int outdata_pull;
@@ -89,6 +92,7 @@ typedef struct msg_client_predict
 	int part_num_delta;
 	int priority; 	// client/loader task pointer
 	unsigned int affinity_mask; // affinity in scheduing
+	unsigned int nos_mask; // resulting mask after scheduling
 	int port; // communication port
 	int osid; // NPU OS id determined by L1 scheduler
 } MsgClientPredict;
@@ -134,6 +138,7 @@ typedef struct msg_client_unload
 typedef struct msg_client_dmkill
 {
         long mtype;
+	unsigned int nos_mask; // nos_mask to be killed
 } MsgClientDmkill;
 
 typedef struct msg_client_port
@@ -196,7 +201,7 @@ typedef struct sock_msg_server_predict
         int nnid; // neural net type, e.g. YOLOV2
 	int input_type;
 	int infile_size;
-	int indata_start_offset;
+	int indata_start_offset_remote;
 	int indata_size;
 	int indata_push;
 	int outdata_pull;
@@ -349,7 +354,7 @@ typedef struct sock_msg_os_nos_info_echo
 } SockMsgOSNosInfoEcho;
 
 ///////////////////// COMMON MESSAGE TYPE for RECEIVER //////////////
-#define MESSAGE_SIZE	128 	// 128 bytes reserved for message
+#define MESSAGE_SIZE	124 	// 124 bytes reserved for message
 
 typedef struct message
 {
